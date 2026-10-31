@@ -14,6 +14,43 @@ says how to cut a release.
 
 ## Unreleased
 
+### A peer over iroh can be watched
+
+`memory::Watch` against an `Iroh` site was refused as `Unsupported`, so a
+replica following a peer's branch had to resolve the cell again on a
+timer. The watch now runs on a QUIC stream of its own: the peer answers
+with the cell as it stands, then with each new state, coalesced to the
+newest, so a reader that keeps reading never misses the last state the
+cell takes. The peer verifies the watch's chain again before each
+delivery, and every `Responder::recheck_interval` (30 s by default) while
+the cell is idle. A revoked or lapsed grant ends the watch with
+`MemoryError::Authorization`.
+
+What this changes for you:
+
+- `Responder` serves through `changes::Announcing`, a store wrapper
+  that announces every successful publish and retract made through it to
+  the watches following those cells. `Responder::store()` now returns
+  that wrapper (`inner()` reaches the store beneath). An embedder that
+  writes the same store locally writes through `Responder::store()` to be
+  heard; writes made to the store beneath reach no watcher until the next
+  announced one.
+- `serve::Answer` has a new variant, `Watching`. A `match` over it needs
+  an arm for it.
+- A peer that does not know the watch command, or a channel that cannot
+  stream, answers `Rejection::Unsupported`, so replication fetches
+  instead.
+- Each watch holds a QUIC stream open on the one connection to its peer,
+  and QUIC allows 100 at once by default: a client can follow at most
+  about 100 cells on one peer before its other exchanges with that peer
+  wait.
+- A store failure while watching is the watch's last answer: the peer
+  sends it and ends the stream, and the watcher begins again.
+
+Why: replacing polling with a live follow over the same peer-to-peer
+link that already carries the blocks, without giving up the UCAN check
+that every other exchange gets.
+
 ### A repository an earlier release left opens, whatever layout its registry is in
 
 Opening or loading a repository that predates layout versioning carries
